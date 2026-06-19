@@ -6,7 +6,7 @@ builds cleanly, passes its tests, and is committed before the next begins.
 | # | Phase | Status |
 |---|-------|--------|
 | 1 | Scaffolding, build system & data models | ✅ done |
-| 2 | Black-Scholes analytic engine | ⏳ pending |
+| 2 | Black-Scholes analytic engine | ✅ done |
 | 3 | Binomial tree (CRR) lattice engine | ⏳ pending |
 | 4 | Monte Carlo GBM path generator (European) | ⏳ pending |
 | 5 | Longstaff-Schwartz LSM (American) with Eigen | ⏳ pending |
