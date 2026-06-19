@@ -1,8 +1,10 @@
 #include "mcop/monte_carlo.hpp"
 
 #include "mcop/rng.hpp"
+#include "mcop/sobol.hpp"
 
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 
 namespace mcop {
@@ -44,7 +46,12 @@ PricingResult monte_carlo_european(const OptionSpec& spec, const MarketData& mar
         return {disc * pay, delta, vega};
     };
 
-    PseudoNormalStream rng(cfg.seed);
+    // European terminal sampling is a 1-D integration, so a 1-D Sobol' stream
+    // suffices when quasi-random sampling is requested.
+    std::unique_ptr<NormalStream> stream;
+    if (cfg.quasi_random) stream = std::make_unique<SobolNormalStream>(1);
+    else stream = std::make_unique<PseudoNormalStream>(cfg.seed);
+    auto draw = [&]() { double z; stream->fill(&z, 1); return z; };
 
     double sum = 0.0, sum_sq = 0.0;
     double delta_sum = 0.0, vega_sum = 0.0;
@@ -55,7 +62,7 @@ PricingResult monte_carlo_european(const OptionSpec& spec, const MarketData& mar
         // the reported standard error reflects the variance reduction.
         const std::size_t pairs = (cfg.num_paths + 1) / 2;
         for (std::size_t i = 0; i < pairs; ++i) {
-            const double z = rng.next();
+            const double z = draw();
             const Sample a = eval(z), b = eval(-z);
             const double s = 0.5 * (a.payoff + b.payoff);
             sum += s;
@@ -66,7 +73,7 @@ PricingResult monte_carlo_european(const OptionSpec& spec, const MarketData& mar
         }
     } else {
         for (std::size_t i = 0; i < cfg.num_paths; ++i) {
-            const Sample a = eval(rng.next());
+            const Sample a = eval(draw());
             sum += a.payoff;
             sum_sq += a.payoff * a.payoff;
             delta_sum += a.delta;

@@ -17,8 +17,9 @@ namespace mcop {
 struct MonteCarloConfig {
     std::size_t num_paths{200000};   // number of simulated paths
     std::size_t num_steps{1};        // time-discretization steps (1 = exact terminal)
-    std::uint64_t seed{12345};       // base RNG seed
-    bool antithetic{false};          // antithetic variates (enabled later)
+    std::uint64_t seed{12345};       // base RNG seed (pseudo-random only)
+    bool antithetic{false};          // antithetic variates
+    bool quasi_random{false};        // use Sobol' low-discrepancy sequence
 };
 
 // Price a European option by direct terminal sampling. Populates price,
