@@ -1,5 +1,7 @@
 #include "mcop/monte_carlo.hpp"
 
+#include "mcop/gbm_sample.hpp"
+#include "mcop/mc_kernel.hpp"
 #include "mcop/rng.hpp"
 #include "mcop/sobol.hpp"
 
@@ -9,89 +11,73 @@
 
 namespace mcop {
 
+using detail::Accumulator;
+using detail::eval_gbm;
+using detail::GbmParams;
+
+namespace detail {
+
+// Run `n_samples` Monte Carlo samples starting at statistical-sample offset
+// `start` into a fresh stream, accumulating into `acc`. Shared by the serial
+// engine and each worker of the parallel engine. With antithetic on, each
+// sample averages the z and -z payoffs and consumes one Sobol' point.
+void run_mc_block(const GbmParams& p, const MonteCarloConfig& cfg,
+                  std::size_t start, std::size_t n_samples, std::uint64_t seed,
+                  Accumulator& acc) {
+    std::unique_ptr<NormalStream> stream;
+    if (cfg.quasi_random)
+        stream = std::make_unique<SobolNormalStream>(1, static_cast<std::uint32_t>(start));
+    else
+        stream = std::make_unique<PseudoNormalStream>(seed);
+
+    auto draw = [&] { double z; stream->fill(&z, 1); return z; };
+
+    for (std::size_t i = 0; i < n_samples; ++i) {
+        if (cfg.antithetic) {
+            const double z = draw();
+            const GbmSample a = eval_gbm(p, z), b = eval_gbm(p, -z);
+            acc.add(0.5 * (a.payoff + b.payoff), 0.5 * (a.delta + b.delta),
+                    0.5 * (a.vega + b.vega));
+        } else {
+            const GbmSample a = eval_gbm(p, draw());
+            acc.add(a.payoff, a.delta, a.vega);
+        }
+    }
+}
+
+PricingResult finalize_mc(const Accumulator& acc) {
+    PricingResult res{};
+    if (acc.n == 0) return res;
+    const double mean = acc.sum / acc.n;
+    res.price = mean;
+    res.delta = acc.delta / acc.n;
+    res.vega = acc.vega / acc.n;
+    if (acc.n > 1) {
+        const double var = (acc.sum_sq - acc.n * mean * mean) / (acc.n - 1);
+        res.std_error = std::sqrt(std::max(var, 0.0) / acc.n);
+    }
+    return res;
+}
+
+}  // namespace detail
+
 PricingResult monte_carlo_european(const OptionSpec& spec, const MarketData& market,
                                    const MonteCarloConfig& cfg) {
     if (cfg.num_paths == 0) throw std::invalid_argument("num_paths must be > 0");
 
-    const double S0 = market.spot;
-    const double K = spec.strike;
-    const double r = market.rate;
-    const double q = market.dividend;
-    const double sigma = market.volatility;
-    const double T = spec.maturity;
-    const bool is_call = (spec.type == OptionType::Call);
-
-    PricingResult res{};
-    if (T <= 0.0) {
-        res.price = spec.payoff(S0);
+    if (spec.maturity <= 0.0) {
+        PricingResult res{};
+        res.price = spec.payoff(market.spot);
         return res;
     }
 
-    const double drift = (r - q - 0.5 * sigma * sigma) * T;
-    const double vol = sigma * std::sqrt(T);
-    const double disc = std::exp(-r * T);
-    const double sqrtT = std::sqrt(T);
+    const GbmParams p = GbmParams::from(spec, market);
+    const std::size_t n_samples =
+        cfg.antithetic ? (cfg.num_paths + 1) / 2 : cfg.num_paths;
 
-    // Evaluate one sample given a normal draw Z; returns the discounted payoff
-    // plus pathwise delta/vega contributions for that draw.
-    struct Sample { double payoff, delta, vega; };
-    auto eval = [&](double z) -> Sample {
-        const double ST = S0 * std::exp(drift + vol * z);
-        const double pay = spec.payoff(ST);
-        const bool itm = is_call ? (ST > K) : (ST < K);
-        // Pathwise estimators (exact for the smooth GBM payoff a.e.).
-        const double sign = is_call ? 1.0 : -1.0;
-        const double delta = itm ? disc * sign * (ST / S0) : 0.0;
-        const double vega = itm ? disc * sign * ST * (sqrtT * z - sigma * T) : 0.0;
-        return {disc * pay, delta, vega};
-    };
-
-    // European terminal sampling is a 1-D integration, so a 1-D Sobol' stream
-    // suffices when quasi-random sampling is requested.
-    std::unique_ptr<NormalStream> stream;
-    if (cfg.quasi_random) stream = std::make_unique<SobolNormalStream>(1);
-    else stream = std::make_unique<PseudoNormalStream>(cfg.seed);
-    auto draw = [&]() { double z; stream->fill(&z, 1); return z; };
-
-    double sum = 0.0, sum_sq = 0.0;
-    double delta_sum = 0.0, vega_sum = 0.0;
-    std::size_t n_stat = 0;
-
-    if (cfg.antithetic) {
-        // Each statistical sample is the average of the Z and -Z payoffs, so
-        // the reported standard error reflects the variance reduction.
-        const std::size_t pairs = (cfg.num_paths + 1) / 2;
-        for (std::size_t i = 0; i < pairs; ++i) {
-            const double z = draw();
-            const Sample a = eval(z), b = eval(-z);
-            const double s = 0.5 * (a.payoff + b.payoff);
-            sum += s;
-            sum_sq += s * s;
-            delta_sum += 0.5 * (a.delta + b.delta);
-            vega_sum += 0.5 * (a.vega + b.vega);
-            ++n_stat;
-        }
-    } else {
-        for (std::size_t i = 0; i < cfg.num_paths; ++i) {
-            const Sample a = eval(draw());
-            sum += a.payoff;
-            sum_sq += a.payoff * a.payoff;
-            delta_sum += a.delta;
-            vega_sum += a.vega;
-            ++n_stat;
-        }
-    }
-
-    const double mean = sum / n_stat;
-    res.price = mean;
-    res.delta = delta_sum / n_stat;
-    res.vega = vega_sum / n_stat;
-
-    if (n_stat > 1) {
-        const double var = (sum_sq - n_stat * mean * mean) / (n_stat - 1);
-        res.std_error = std::sqrt(std::max(var, 0.0) / n_stat);
-    }
-    return res;
+    Accumulator acc;
+    detail::run_mc_block(p, cfg, 0, n_samples, cfg.seed, acc);
+    return detail::finalize_mc(acc);
 }
 
 }  // namespace mcop

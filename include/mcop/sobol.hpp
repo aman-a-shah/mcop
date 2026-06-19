@@ -26,6 +26,11 @@ public:
     // Fill x[0..dim) with the next point's coordinates, each in (0,1).
     void next(double* x);
 
+    // Jump directly to sequence position `index` in O(bits * dim), so worker
+    // threads can each own a disjoint contiguous block without overlap. The
+    // next next() call returns the point at `index`.
+    void set_index(std::uint32_t index);
+
     int dimension() const { return dim_; }
 
 private:
@@ -41,7 +46,10 @@ private:
 // emitted block of `dim` normals comes from one Sobol' point.
 class SobolNormalStream : public NormalStream {
 public:
-    explicit SobolNormalStream(int dim = 1) : gen_(dim), dim_(dim) {}
+    explicit SobolNormalStream(int dim = 1, std::uint32_t start = 0)
+        : gen_(dim), dim_(dim) {
+        if (start != 0) gen_.set_index(start);
+    }
 
     void fill(double* out, std::size_t n) override {
         std::array<double, SobolGenerator::kMaxDim> pt{};

@@ -42,6 +42,19 @@ SobolGenerator::SobolGenerator(int dim) : dim_(dim) {
     }
 }
 
+void SobolGenerator::set_index(std::uint32_t index) {
+    // The Sobol' state after generating `index` points equals the XOR of the
+    // direction numbers selected by the set bits of gray(index).
+    const std::uint32_t gray = index ^ (index >> 1);
+    ix_.fill(0u);
+    for (int p = 0; p < kMaxBit; ++p) {
+        if (gray & (1u << p)) {
+            for (int k = 1; k <= dim_; ++k) ix_[k] ^= iv_[p * kMaxDim + k];
+        }
+    }
+    count_ = index;
+}
+
 void SobolGenerator::next(double* x) {
     // Gray-code update: find the position of the lowest zero bit of the counter.
     std::uint32_t im = count_++;
