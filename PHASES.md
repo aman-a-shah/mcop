@@ -12,6 +12,6 @@ builds cleanly, passes its tests, and is committed before the next begins.
 | 5 | Longstaff-Schwartz LSM (American) with Eigen | ✅ done |
 | 6 | Variance reduction (Sobol + antithetic) | ✅ done |
 | 7 | Multi-threaded thread pool | ✅ done |
-| 8 | Pybind11 wrapper, benchmarks & docs | ⏳ pending |
+| 8 | Pybind11 wrapper, benchmarks & docs | ✅ done |
 
 See `Plan.md` for the full product requirement document and mathematical spec.
