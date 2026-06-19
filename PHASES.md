@@ -9,7 +9,7 @@ builds cleanly, passes its tests, and is committed before the next begins.
 | 2 | Black-Scholes analytic engine | ✅ done |
 | 3 | Binomial tree (CRR) lattice engine | ✅ done |
 | 4 | Monte Carlo GBM path generator (European) | ✅ done |
-| 5 | Longstaff-Schwartz LSM (American) with Eigen | ⏳ pending |
+| 5 | Longstaff-Schwartz LSM (American) with Eigen | ✅ done |
 | 6 | Variance reduction (Sobol + antithetic) | ⏳ pending |
 | 7 | Multi-threaded thread pool | ⏳ pending |
 | 8 | Pybind11 wrapper, benchmarks & docs | ⏳ pending |
