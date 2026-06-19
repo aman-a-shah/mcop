@@ -7,7 +7,7 @@ builds cleanly, passes its tests, and is committed before the next begins.
 |---|-------|--------|
 | 1 | Scaffolding, build system & data models | ✅ done |
 | 2 | Black-Scholes analytic engine | ✅ done |
-| 3 | Binomial tree (CRR) lattice engine | ⏳ pending |
+| 3 | Binomial tree (CRR) lattice engine | ✅ done |
 | 4 | Monte Carlo GBM path generator (European) | ⏳ pending |
 | 5 | Longstaff-Schwartz LSM (American) with Eigen | ⏳ pending |
 | 6 | Variance reduction (Sobol + antithetic) | ⏳ pending |
