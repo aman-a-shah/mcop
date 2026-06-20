@@ -5,26 +5,6 @@ zero-copy **Python** wrapper (pybind11). It prices European and American options
 through three independent, cross-validating paradigms — so every number is
 checkable against the other two.
 
-```
-                  ┌─────────────────────────────────────────┐
-                  │          Options Pricing Engine          │
-                  └────────────────────┬────────────────────┘
-                                       │
-         ┌─────────────────────────────┼─────────────────────────────┐
-         ▼                             ▼                             ▼
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│ Analytic Engine  │         │ Lattice Engine   │         │ Simulation Engine│
-│ (Black-Scholes)  │         │ (Binomial Tree)  │         │ (Monte Carlo)    │
-└──────────────────┘         └──────────────────┘         └──────────────────┘
-```
-
-| | |
-|---|---|
-| **Throughput** | ~54M paths/sec (C++), 105M/sec via the Python quasi-MC path (10 cores) |
-| **Latency** | ~15 ms for a 1M-path valuation |
-| **Accuracy** | ~1e-5 pricing error vs the analytic benchmark (target < $0.04) |
-| **Variance reduction** | Sobol' cuts error 6–55× vs antithetic pseudo-random at equal paths |
-
 ---
 
 ## Showcase report
@@ -45,6 +25,28 @@ Regenerate (re-runs the engine, then prints via headless Chrome):
 ```bash
 bash site/build_pdf.sh
 ```
+
+---
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │          Options Pricing Engine          │
+                  └────────────────────┬────────────────────┘
+                                       │
+         ┌─────────────────────────────┼─────────────────────────────┐
+         ▼                             ▼                             ▼
+┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
+│ Analytic Engine  │         │ Lattice Engine   │         │ Simulation Engine│
+│ (Black-Scholes)  │         │ (Binomial Tree)  │         │ (Monte Carlo)    │
+└──────────────────┘         └──────────────────┘         └──────────────────┘
+```
+
+| | |
+|---|---|
+| **Throughput** | ~54M paths/sec (C++), 105M/sec via the Python quasi-MC path (10 cores) |
+| **Latency** | ~15 ms for a 1M-path valuation |
+| **Accuracy** | ~1e-5 pricing error vs the analytic benchmark (target < $0.04) |
+| **Variance reduction** | Sobol' cuts error 6–55× vs antithetic pseudo-random at equal paths |
 
 ---
 
