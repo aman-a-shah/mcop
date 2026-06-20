@@ -19,3 +19,11 @@ venv/
 .idea/
 .DS_Store
 compile_commands.json
+
+# Dropped-in design reference materials (not part of this project)
+awesome-design-md/
+quant_showcase_style.md
+statistical-arbitrage.pdf
+
+# Generated showcase data (regenerate with site/export_data.py)
+site/data.json

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monte Carlo Options Pricing — A Three-Engine Valuation Library</title>
+  <meta name="description" content="A high-performance C++17 options pricing engine: closed-form Black-Scholes, a Cox-Ross-Rubinstein lattice, Sobol-accelerated Monte Carlo, and Longstaff-Schwartz least-squares Monte Carlo for American options — every figure rendered from a real run of the engine." />
+
+  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400..600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+
+  <header class="masthead" id="top">
+    <div class="wrap">
+      <p class="dateline"><span class="mono">Engineering note</span> · C++17 · Eigen · pybind11 · reproducible</p>
+      <h1>Monte Carlo Options Pricing</h1>
+      <p class="lede">A high-performance valuation engine that prices European and American options three
+        independent ways — a closed-form analytic benchmark, a binomial lattice, and a Sobol-accelerated,
+        multi-threaded Monte Carlo simulator — so every number is cross-checked against the other two.
+        Every figure on this page is rendered from a live run of the engine.</p>
+
+      <dl class="abstract-stats" aria-label="Headline results">
+        <div><dt>Throughput</dt><dd class="mono"><span data-stat="headline.throughput" data-fmt="compact">—</span>/s</dd></div>
+        <div><dt>1M-path latency</dt><dd class="mono"><span data-stat="headline.latency_ms" data-fmt="num0">—</span>&thinsp;ms</dd></div>
+        <div><dt>Error vs analytic</dt><dd class="mono" data-stat="headline.mae" data-fmt="sci">—</dd></div>
+        <div><dt>Quasi-random speedup</dt><dd class="mono"><span data-stat="headline.speedup_max" data-fmt="int">—</span>×</dd></div>
+      </dl>
+
+      <figure class="hero-spark">
+        <div id="fig-hero" class="chart" data-chart="hero"></div>
+        <figcaption>Risk-neutral geometric Brownian motion: 28 simulated price paths over one year,
+          with the analytic forward \(S_0 e^{(r-q)t}\) through their center. The Monte Carlo engine
+          averages the discounted payoff over millions of such paths.</figcaption>
+      </figure>
+
+      <nav class="toc" aria-label="Contents">
+        <a href="#analytic"><span class="mono">01</span> Black-Scholes</a>
+        <a href="#lattice"><span class="mono">02</span> Lattice</a>
+        <a href="#simulation"><span class="mono">03</span> Monte Carlo</a>
+        <a href="#american"><span class="mono">04</span> American</a>
+        <a href="#parallel"><span class="mono">05</span> Performance</a>
+        <a href="#results"><span class="mono">06</span> Results</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- Pipeline overview -->
+    <section class="prose pipeline-section" aria-label="Engines">
+      <p>An option price is a discounted, risk-neutral expectation of a future payoff. The hard part is
+        that the same number can be reached by very different routes — and a route is only trustworthy if
+        it <strong>agrees with the others</strong>. This engine implements three, deliberately, so the
+        analytic formula validates the tree, the tree validates the simulator, and the simulator extends
+        to payoffs the formula cannot touch.</p>
+      <div class="pipeline" id="pipeline">
+        <div class="stage"><span class="mono num">01</span><span class="lbl">Analytic</span><span class="sub">Black-Scholes · Greeks</span></div>
+        <div class="flow" aria-hidden="true">→</div>
+        <div class="stage"><span class="mono num">02</span><span class="lbl">Lattice</span><span class="sub">CRR binomial tree</span></div>
+        <div class="flow" aria-hidden="true">→</div>
+        <div class="stage"><span class="mono num">03</span><span class="lbl">Simulation</span><span class="sub">GBM · Sobol · threads</span></div>
+        <div class="flow" aria-hidden="true">→</div>
+        <div class="stage accent-stage"><span class="mono num">04</span><span class="lbl">American</span><span class="sub">Longstaff-Schwartz</span></div>
+      </div>
+      <p class="frozen-note"><span class="mono">cross-check →</span> for the reference contract
+        (\(S=100\), \(K=100\), \(r=5\%\), \(\sigma=20\%\), \(T=1\)), all three European engines agree to
+        the third decimal: analytic <span class="mono" data-stat="reference.bs.price" data-fmt="num3">—</span>,
+        lattice <span class="mono" data-stat="reference.tree" data-fmt="num3">—</span>,
+        Monte Carlo <span class="mono" data-stat="reference.mc.price" data-fmt="num3">—</span>.</p>
+    </section>
+
+    <!-- 01 ANALYTIC -->
+    <section id="analytic" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">01</span>
+        <h2>The analytic benchmark</h2>
+      </div>
+      <p>For a European option, Black-Scholes-Merton gives the price in closed form. With spot \(S\),
+        strike \(K\), rate \(r\), dividend yield \(q\), volatility \(\sigma\) and maturity \(T\), a call
+        is worth</p>
+      <p class="equation">\[ C = S\,e^{-qT}N(d_1) - K\,e^{-rT}N(d_2), \qquad
+        d_{1,2} = \frac{\ln(S/K) + \left(r - q \pm \tfrac{1}{2}\sigma^2\right)T}{\sigma\sqrt{T}}. \]</p>
+      <p>The only transcendental ingredient is the standard normal CDF \(N(\cdot)\). Rather than a
+        branchy rational approximation, the engine computes it <strong>branchlessly</strong> from the
+        complementary error function — no data-dependent branch to stall the pipeline in a tight loop:</p>
+      <p class="equation">\[ N(x) = \tfrac{1}{2}\,\operatorname{erfc}\!\left(-x/\sqrt{2}\right). \]</p>
+      <p>This formula is the ground truth the other engines are measured against. It also yields every
+        first-order sensitivity (the <em>Greeks</em>) in closed form.</p>
+
+      <figure>
+        <div id="fig-value" class="chart" data-chart="value"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;1</span> Option value versus spot for the call and put
+          at <span class="mono">T=1</span>. The dashed kinks are the intrinsic payoffs
+          \(\max(S-K,0)\) and \(\max(K-S,0)\); the gap above them is <strong>time value</strong>. The
+          curves are smooth and convex — the source of positive gamma.</figcaption>
+      </figure>
+
+      <p>For the reference call the sensitivities are:</p>
+      <div class="param-grid" aria-label="Black-Scholes Greeks">
+        <div><span class="pk">Δ</span><span class="pv mono" data-stat="reference.bs.delta" data-fmt="num4">—</span><span class="pd">∂V/∂S</span></div>
+        <div><span class="pk">Γ</span><span class="pv mono" data-stat="reference.bs.gamma" data-fmt="num4">—</span><span class="pd">∂²V/∂S²</span></div>
+        <div><span class="pk">𝜈</span><span class="pv mono" data-stat="reference.bs.vega" data-fmt="num2">—</span><span class="pd">∂V/∂σ</span></div>
+        <div><span class="pk">Θ</span><span class="pv mono" data-stat="reference.bs.theta" data-fmt="num2">—</span><span class="pd">∂V/∂t</span></div>
+      </div>
+    </section>
+
+    <!-- 02 LATTICE -->
+    <section id="lattice" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">02</span>
+        <h2>The binomial lattice</h2>
+      </div>
+      <p>The Cox-Ross-Rubinstein tree discretizes time into \(N\) steps of \(\Delta t = T/N\) and the
+        asset into recombining up/down moves. The move sizes and the risk-neutral probability are chosen
+        to match the volatility and drift of the continuous process:</p>
+      <p class="equation">\[ u = e^{\sigma\sqrt{\Delta t}}, \qquad d = \tfrac{1}{u}, \qquad
+        p = \frac{e^{(r-q)\Delta t} - d}{u - d}. \]</p>
+      <p>Terminal payoffs are discounted backward through the tree one step at a time. The lattice's real
+        power is that early exercise costs nothing extra to model — at every node the holder simply takes
+        whichever is larger, continuing or exercising:</p>
+      <p class="equation">\[ V = e^{-r\Delta t}\big(p\,V_{u} + (1-p)\,V_{d}\big), \qquad
+        V^{\text{Am}} = \max\!\big(\text{intrinsic},\; V\big). \]</p>
+      <p>As the tree deepens, its price converges to the analytic formula. The convergence is the
+        familiar even/odd <em>sawtooth</em> of the binomial scheme, decaying as \(O(1/N)\):</p>
+
+      <figure>
+        <div id="fig-tree" class="chart" data-chart="tree"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;2</span> CRR price for the reference call as a
+          function of step count, oscillating into the Black-Scholes value
+          (<span class="mono" data-stat="reference.bs.price" data-fmt="num4">—</span>, dashed). The
+          amplitude of the sawtooth halves each time the resolution doubles.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 03 MONTE CARLO -->
+    <section id="simulation" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">03</span>
+        <h2>Monte Carlo &amp; variance reduction</h2>
+      </div>
+      <p>For path-dependent and high-dimensional payoffs there is no formula — so the engine simulates.
+        Under the risk-neutral measure the underlying follows geometric Brownian motion, whose terminal
+        distribution is sampled in closed form (no time-stepping needed for a European payoff):</p>
+      <p class="equation">\[ dS_t = (r-q)S_t\,dt + \sigma S_t\,dW_t \;\;\Longrightarrow\;\;
+        S_T = S_0\,\exp\!\Big(\big(r - q - \tfrac{1}{2}\sigma^2\big)T + \sigma\sqrt{T}\,Z\Big), \quad Z\sim N(0,1). \]</p>
+      <p>The price is the discounted sample mean \(e^{-rT}\,\widehat{\mathbb{E}}[\text{payoff}]\), reported
+        with its standard error. A naive estimator converges slowly, at \(O(1/\sqrt{N})\). The engine buys
+        accuracy two ways without touching the math:</p>
+      <ul class="friction-list">
+        <li><span class="mono">antithetic</span> variates evaluate \(Z\) and \(-Z\) together, cancelling odd-order sampling error.</li>
+        <li><span class="mono">Sobol'</span> low-discrepancy sequences replace pseudo-random draws, pushing convergence toward \(O(1/N)\).</li>
+      </ul>
+
+      <h3>Why low-discrepancy points win</h3>
+      <p>Pseudo-random points clump and leave gaps; a Sobol' sequence fills the unit square almost
+        uniformly at every prefix. Integrating a smooth payoff over better-spread points is simply more
+        accurate. The engine's own 2-D Sobol' generator versus a pseudo-random draw of the same size:</p>
+
+      <figure>
+        <div id="fig-sobol" class="chart" data-chart="sobol"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;3</span> <span class="mono" data-stat="uniformity.n" data-fmt="int">—</span>
+          points each. Left: pseudo-random — visible clusters and voids. Right: the engine's Sobol'
+          sequence — no clump larger than the local cell. Both fill \([0,1)^2\); only one does it evenly.</figcaption>
+      </figure>
+
+      <p>The payoff is the convergence rate. Pricing the reference call at growing path counts, Sobol'
+        sampling reaches an accuracy that pseudo-random sampling needs orders of magnitude more paths to
+        match — up to <span class="mono"><span data-stat="headline.speedup_max" data-fmt="int">—</span>×</span>
+        fewer paths for the same error at the right-hand end:</p>
+
+      <figure>
+        <div id="fig-converge" class="chart" data-chart="converge"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;4</span> Absolute pricing error versus path count
+          (both axes logarithmic). The pseudo-random curve is the RMS error over 24 seeds and tracks the
+          \(O(1/\sqrt{N})\) reference slope; Sobol' descends far faster. Antithetic variates are enabled
+          on both.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 04 AMERICAN -->
+    <section id="american" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">04</span>
+        <h2>American options</h2>
+      </div>
+      <p>Standard Monte Carlo marches forward in time and is therefore blind to <em>early exercise</em> —
+        the defining feature of an American option. The Longstaff-Schwartz algorithm restores it with a
+        backward sweep: at each exercise date it estimates the <strong>continuation value</strong> of the
+        in-the-money paths by least-squares regression of their discounted future cash flows onto a basis
+        of the current price, and exercises wherever the immediate payoff wins.</p>
+      <p class="equation">\[ \widehat{C}(S) = \sum_{k=0}^{K}\beta_k\,L_k\!\left(S/K\right), \qquad
+        \text{exercise when } \;\text{intrinsic} \;\ge\; \widehat{C}(S). \]</p>
+      <p>The basis functions \(L_k\) are <strong>Laguerre polynomials</strong>. Raw monomials
+        \((x, x^2, x^3)\) make the regression's normal matrix badly conditioned through multicollinearity;
+        the orthogonal Laguerre family keeps \(X^{\!\top}X\) well-conditioned, so the Eigen-backed
+        column-pivoted QR solve stays accurate. Evaluated at moneyness \(S/K\) to keep the design matrix
+        tame.</p>
+      <p>The result is the early-exercise premium — the American put is worth strictly more than the
+        European put, and the LSM simulator recovers the lattice value to within Monte Carlo noise:</p>
+
+      <figure>
+        <div id="fig-american" class="chart" data-chart="american"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;5</span> American versus European put value across
+          spot. The shaded gap is the early-exercise premium; left of the boundary at
+          <span class="mono">S≈<span data-stat="american.boundary" data-fmt="num0">—</span></span> the
+          American value rides the intrinsic line (dashed) — it is optimal to exercise now. At the money
+          the LSM simulation prices it at
+          <span class="mono" data-stat="american.lsm_price" data-fmt="num3">—</span> against the lattice's
+          <span class="mono" data-stat="american.tree_price" data-fmt="num3">—</span>.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 05 PERFORMANCE -->
+    <section id="parallel" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">05</span>
+        <h2>Throughput &amp; scaling</h2>
+      </div>
+      <p>Simulation is embarrassingly parallel — each path is independent — but only if the random number
+        generation is. The engine splits the paths into contiguous, disjoint blocks across a worker pool,
+        and gives each worker <strong>thread-local generator state</strong>: pseudo-random workers get
+        well-separated seeds, and Sobol' workers <em>skip-ahead</em> to their block in
+        \(O(\text{bits}\cdot\text{dim})\) via a Gray-code jump:</p>
+      <p class="equation">\[ \mathbf{x}_n = \bigoplus_{\,j\,:\;\text{bit } j \text{ of } \mathrm{gray}(n)} \mathbf{v}_j,
+        \qquad \mathrm{gray}(n) = n \oplus (n \gg 1). \]</p>
+      <p>No shared mutable state means no locks on the hot loop, and the additive merge of partial sums
+        makes the quasi-random price <strong>bit-identical regardless of thread count</strong>. Throughput
+        scales cleanly with cores:</p>
+
+      <figure>
+        <div id="fig-scaling" class="chart" data-chart="scaling"></div>
+        <figcaption><span class="fignum">Fig.&nbsp;6</span> Path-generation throughput versus worker
+          count on a <span class="mono" data-stat="meta.hw_threads" data-fmt="int">—</span>-core machine
+          (bars), against perfect linear scaling from the single-thread baseline (dashed). Measured by
+          timing a <span class="mono" data-stat="meta.bench_paths" data-fmt="compact">—</span>-path
+          valuation at each width.</figcaption>
+      </figure>
+
+      <div class="throughput">
+        <div class="big mono"><span data-stat="headline.throughput" data-fmt="compact">—</span>/s</div>
+        <p>peak path-generation rate through the simulator. A standard 1M-path valuation returns in
+          <span class="mono"><span data-stat="headline.latency_ms" data-fmt="num0">—</span>&thinsp;ms</span> —
+          comfortably interactive, leaving headroom for live Greeks and scenario sweeps.</p>
+      </div>
+    </section>
+
+    <!-- 06 RESULTS -->
+    <section id="results" class="prose">
+      <div class="section-head">
+        <span class="mono section-no">06</span>
+        <h2>Cross-engine validation</h2>
+      </div>
+      <p>The whole design rests on independent engines agreeing. Across a range of contracts — in- and
+        out-of-the-money, long-dated, dividend-paying, European and American — the analytic, lattice, and
+        simulation prices line up to the cent:</p>
+
+      <figure class="table-figure">
+        <div id="tbl-engines" class="data-table" data-chart="engines"></div>
+        <figcaption><span class="fignum">Tbl.&nbsp;1</span> One contract per row, priced by every engine
+          that applies. <span class="swatch swatch-pair"></span> European (all three methods) ·
+          <span class="swatch swatch-noise"></span> American (lattice + LSM only). Dashes mark engines
+          that do not apply to that style.</figcaption>
+      </figure>
+
+      <figure class="table-figure">
+        <div id="tbl-metrics" class="data-table" data-chart="metrics"></div>
+        <figcaption><span class="fignum">Tbl.&nbsp;2</span> Engineering scorecard: measured results
+          against the project's stated targets.</figcaption>
+      </figure>
+    </section>
+
+    <section class="prose colophon">
+      <div class="section-head"><h2>Colophon</h2></div>
+      <p>A header-only-leaning C++17 core (one static library, four engines) with a zero-copy NumPy
+        binding via pybind11; Eigen backs the Longstaff-Schwartz regression. No pricing library is called
+        — Black-Scholes, the lattice, the Sobol' generator, the inverse-normal map, and the LSM solver are
+        all hand-implemented and unit-tested. Every number on this page was produced by:</p>
+      <pre class="repro mono"><code>cmake --build build -j &amp;&amp; python3 site/export_data.py</code></pre>
+      <p class="fine">Reference contract \(S=K=100\), \(r=5\%\), \(\sigma=20\%\), \(T=1\) ·
+        <span class="mono" data-stat="meta.hw_threads" data-fmt="int">—</span> cores ·
+        Sobol' + antithetic Monte Carlo · deterministic for a fixed seed.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span class="mono">mcop</span>
+      <a href="#top">back to top ↑</a>
+    </div>
+  </footer>
+
+  <script src="charts.js" defer></script>
+</body>
+</html>

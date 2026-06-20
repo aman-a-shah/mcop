@@ -9,6 +9,7 @@
 #include "mcop/monte_carlo.hpp"
 #include "mcop/option.hpp"
 #include "mcop/parallel_monte_carlo.hpp"
+#include "mcop/sobol.hpp"
 #ifdef MCOP_HAVE_EIGEN
 #include "mcop/longstaff_schwartz.hpp"
 #endif
@@ -47,6 +48,21 @@ py::array_t<double> price_european_batch(py::array_t<double, py::array::c_style 
             MarketData m(s(i), rate, vol, dividend);
             o(i) = black_scholes_price(spec, m).price;
         }
+    }
+    return out;
+}
+
+// First `n` points of the 2-D Sobol' low-discrepancy sequence, as an (n, 2)
+// array — used to visualize the engine's actual quasi-random uniformity.
+py::array_t<double> sobol_points(std::size_t n) {
+    py::array_t<double> out({static_cast<py::ssize_t>(n), py::ssize_t{2}});
+    auto o = out.mutable_unchecked<2>();
+    SobolGenerator g(2);
+    double pt[2];
+    for (std::size_t i = 0; i < n; ++i) {
+        g.next(pt);
+        o(i, 0) = pt[0];
+        o(i, 1) = pt[1];
     }
     return out;
 }
@@ -107,11 +123,13 @@ PYBIND11_MODULE(mcop_pricer, m) {
     m.def(
         "monte_carlo",
         [](const OptionSpec& spec, const MarketData& market, std::size_t paths,
-           bool antithetic, bool quasi_random, unsigned threads) {
+           bool antithetic, bool quasi_random, unsigned threads,
+           std::uint64_t seed) {
             MonteCarloConfig cfg;
             cfg.num_paths = paths;
             cfg.antithetic = antithetic;
             cfg.quasi_random = quasi_random;
+            cfg.seed = seed;
             py::gil_scoped_release release;
             return threads <= 1
                        ? monte_carlo_european(spec, market, cfg)
@@ -119,7 +137,8 @@ PYBIND11_MODULE(mcop_pricer, m) {
         },
         py::arg("spec"), py::arg("market"), py::arg("paths") = 1u << 20,
         py::arg("antithetic") = true, py::arg("quasi_random") = true,
-        py::arg("threads") = 0, "Monte Carlo price for a European option.");
+        py::arg("threads") = 0, py::arg("seed") = 12345,
+        "Monte Carlo price for a European option.");
 
 #ifdef MCOP_HAVE_EIGEN
     m.def(
@@ -142,6 +161,9 @@ PYBIND11_MODULE(mcop_pricer, m) {
           py::arg("strike"), py::arg("rate"), py::arg("vol"), py::arg("maturity"),
           py::arg("dividend") = 0.0, py::arg("is_call") = true,
           "Vectorized European Black-Scholes over NumPy spot/strike arrays.");
+
+    m.def("sobol_points", &sobol_points, py::arg("n"),
+          "First n points of the engine's 2-D Sobol' sequence as an (n,2) array.");
 
     m.attr("__version__") = "0.1.0";
 }
